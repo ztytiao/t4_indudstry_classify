@@ -185,7 +185,7 @@ if __name__=="__main__":
         print('Analysising new input finished')#todo
         Cpy=df_Input['APPLICATION']
         Cat=df_Base['合并后']
-        w,cat=addNewPT(key, newkey, ipc, newipc, Cpy, Cat, df_result=[],corkeyNo=corkeyNo)
+        w,cat=addNewPT(key, newkey, ipc, newipc, Cpy, Cat, df_result=[],s_Cat=[],corkeyNo=corkeyNo)
 
         end=time.clock()
         dur=end-start
