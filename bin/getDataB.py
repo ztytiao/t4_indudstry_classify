@@ -74,6 +74,7 @@ def __jiebabatch(summary):
 def __ipc(ipc):
     '''每行增加none，使得没有的也能匹配上'''
     cor=[]
+    lv0=re.compile(u'\D+[0-9]{1,3}')
     lv1=re.compile(u'\D+[0-9]{1,3}\D+')
     lv2=re.compile(u'\D+[0-9]{1,3}\D+[0-9]{1,3}')
     for j,i in enumerate(ipc):
@@ -81,6 +82,7 @@ def __ipc(ipc):
             print('IPC@---------',j)
         subcor=['none']
         if type(i)!=type(1.1):#写入ipc三级域名  modified--0828
+            subcor.append(lv0.findall(i)[0])
             subcor.append(lv1.findall(i)[0])
             if lv2.findall(i):
                 subcor.append(lv2.findall(i)[0])
