@@ -25,7 +25,7 @@ def readFilesName(dir):
 def readExcel(url):
     df=pd.read_excel(url,na_values='',index_col=None)
     df['ABSTRACT']=df['ABSTRACT'].astype(str)
-    #df['ABSTRACT']=df['ABSTRACT']+'Nan'
+    df['ABSTRACT']=df['ABSTRACT']+' END'
     return df
 
 def combine_Abstract(df,df_Base,df_Test):
@@ -141,17 +141,21 @@ def TFtrain(xtrain,ytrain,clf=GaussianNB(),test_size=0.2,ada=0,nestimators=100):
 
 def TFtesttfidf(cor,vectorizer,transformer):
     '''根据已经获取的，计算测试集的权重'''
-    test = transformer.transform(vectorizer.transform(cor))  # 第一个fit_transform是计算tf-idf，第二个fit_transform是将文本转为词频矩阵  
-   # word = vectorizer.get_feature_names()  # 获取词袋模型中的所有词语  
-    weight = test.toarray()  # 将tf-idf矩阵抽取出来，元素a[i][j]表示j词在i类文本中的tf-idf权重 
+    if vectorizer.transform(cor).shape[0]<1:
+        weight=np.zeros([cor.__len__(),vectorizer.transform(cor).shape[1]])
+        pass
+    else:
+        test = transformer.transform(vectorizer.transform(cor))  # 第一个fit_transform是计算tf-idf，第二个fit_transform是将文本转为词频矩阵  
+       # word = vectorizer.get_feature_names()  # 获取词袋模型中的所有词语  
+        weight = test.toarray()  # 将tf-idf矩阵抽取出来，元素a[i][j]表示j词在i类文本中的tf-idf权重 
     return weight
 def TFtraintfidf(cor):
     '''获取词语集合，以及权重'''
-    vectorizer = CountVectorizer(max_features=3000)  # TODO 该类会将文本中的词语转换为词频矩阵，矩阵元素a[i][j] 表示j词在i类文本下的词频  
+    vectorizer = CountVectorizer()  # TODO 该类会将文本中的词语转换为词频矩阵，矩阵元素a[i][j] 表示j词在i类文本下的词频  
     transformer = TfidfTransformer()  # 该类会统计每个词语的tf-idf权值  
     train = transformer.fit_transform(vectorizer.fit_transform(cor))  # 第一个fit_transform是计算tf-idf，第二个fit_transform是将文本转为词频矩阵  
     word = vectorizer.get_feature_names()  # 获取词袋模型中的所有词语  
-    print('-----------------size of feature is',len(word))
+    print('Size of feature is',len(word))
     weight = train.toarray()  # 将tf-idf矩阵抽取出来，元素a[i][j]表示j词在i类文本中的tf-idf权重  
     return word,weight,vectorizer,transformer
 def adaboost(clf,X_train,y_train,learning_rate=1,n_estimators=100):
@@ -169,12 +173,13 @@ def TFtesting(x,y,clf):
 def SplitTrainning(df_Base,size_Train,df_Predict,size_Predict,Cat,repeatNo):
     '''预测'''
     del df_Predict['Cat']
-    df=pd.DataFrame(index=df_Predict['ID'],columns=['predict'])
+    df=pd.DataFrame(index=df_Predict['ID'],columns=['TITLE','predict'])
     df['predict']=' '
+    df['TITLE']=df_Predict['TITLE'].tolist()
     batch_Predict=int(df_Predict.shape[0]/size_Predict)#多批次预测
     for j in range(repeatNo):
         '''构建多个小分类器'''
-        print('Now Traning the ',j,' th classifly')
+        print('Now Traning the ',j,' th classiflier')
         tic=time.clock()
         toc=time.clock()
         Y=[]
@@ -182,19 +187,23 @@ def SplitTrainning(df_Base,size_Train,df_Predict,size_Predict,Cat,repeatNo):
         df_Train = df_Base.loc[indSeleted]
         clff, vector, transformer=TFtrain(xtrain=df_Train['ABSTRACT'],  ytrain=df_Train['id'],
                                        clf=GaussianNB(), test_size=0.7, ada=1, nestimators=50)
+        print('***************Trainning finished, and Start predicting***************')
         for i in range(batch_Predict):
             indSeleted2=range(i*size_Predict,(i+1)*size_Predict)
-            df_T=df_Predict.loc[indSeleted2]
+            df_T=df_Predict.iloc[indSeleted2]
             xtestcor = __TFgetjiebaSeries(df_T['ABSTRACT'])
             weighttest = TFtesttfidf(xtestcor, vector, transformer)
             ypredict =clff.predict(weighttest.tolist())
             Y=Y+ypredict.tolist()
-            print('Predict',i*size_Predict,' th record-------------------',time.clock())
-        indSeleted2 = range(batch_Predict * size_Predict, df_Predict.shape[0])
-        df_T = df_Predict.loc[indSeleted2]
-        ypredict = TFtrainandtest_Real(xtrain=df_Train['ABSTRACT'], xtest=df_T['ABSTRACT'], ytrain=df_Train['id'],
-                                       clf=GaussianNB(), test_size=0.7, ada=1, nestimators=50)
-        Y = Y + ypredict.tolist()
+            print('Predict',i*size_Predict,' th record-------------------and takes',time.clock())
+        if batch_Predict * size_Predict<df_Predict.shape[0]:
+            #the rest item
+            indSeleted2 = range(batch_Predict * size_Predict, df_Predict.shape[0])
+            df_T = df_Predict.loc[indSeleted2]
+            xtestcor = __TFgetjiebaSeries(df_T['ABSTRACT'])
+            weighttest = TFtesttfidf(xtestcor, vector, transformer)
+            ypredict = clff.predict(weighttest.tolist())
+            Y = Y + ypredict.tolist()
         Y=[str(i) for i in Y]
         df['predict']=df['predict']+' '+Y
         print('Total time',time.clock(),'This round takes',time.clock()-toc)
@@ -214,6 +223,23 @@ def writeExcel(df,url='',row_Max=500000):
     write = pd.ExcelWriter(u)
     df[No * row_Max:df.shape[0]].to_excel(write, sheet_name='Sheet1', merge_cells=False)
     write.save()
+
+def TrainByIPC(df_Base,size_Train,df_Predict,size_Predict,Cat,repeatNo):
+    df_Base['l1_IPC']=df_Base['IPC'].str.slice(0,4)
+    df_Predict['l1_IPC']=df_Predict['IPC'].str.slice(0,4)
+    IPCs=df_Base['IPC'].str.slice(0,4).unique()
+    df_T=pd.DataFrame()
+    for i in IPCs:
+        df_Base_temp=df_Base[df_Base['l1_IPC']==i]
+        df_Predict_temp = df_Predict[df_Predict['l1_IPC'] == i]
+        size_Train_temp=min(size_Train,df_Base_temp.shape[0])
+        size_Predict_temp=min(size_Predict,df_Predict_temp.shape[0])
+        if size_Predict_temp>0 and size_Train_temp>10:
+            print('Now,Processing IP in', i,'with train size',df_Base_temp.shape[0],'and predict size',df_Predict_temp.shape[0])
+            df_Temp=SplitTrainning(df_Base_temp,size_Train_temp,df_Predict_temp,size_Predict_temp,Cat,repeatNo)
+            df_T=pd.concat([df_T,df_Temp],axis=0,ignore_index=False)
+
+    return df_T
 
 if __name__=="__main__":
     #1.inial
@@ -236,7 +262,7 @@ if __name__=="__main__":
     print('-------------Start Training Data--------------')
     df_Base,Cat=digitize_Cat(df_Base)
 
-    df=SplitTrainning(df_Base,200,df_Test,500,Cat,1)
+    df=TrainByIPC(df_Base,400,df_Test,500,Cat,1)
     # 上面有三个数字，第一个代表训练集大小，第二个代表预测集大小，第三个表示有多少个弱分类器
     #4.export result
     print(df)
