@@ -13,7 +13,25 @@ from sklearn.ensemble import AdaBoostClassifier
 import time
 import os
 import re
+import threading as td
+from time import sleep, ctime
 
+#-----------for parallel computing
+class MyThread(td.Thread):
+    def __init__(self,func,args,name=''):
+        td.Thread.__init__(self)
+        self.name=name
+        self.func=func
+        self.args=args
+    def getResult(self):
+        return self.res
+
+    def run(self):
+        print("Starting",self.name,'at:',ctime())
+        self.res=self.func(self.args)
+        print(self.name,'finished at:', ctime())
+
+#-------------end parallel computing
 def readFilesName(dir):
     name=[]
     for parent,dirnames,filenames in os.walk(dir):
@@ -151,12 +169,15 @@ def TFtesttfidf(cor,vectorizer,transformer):
     return weight
 def TFtraintfidf(cor):
     '''获取词语集合，以及权重'''
-    vectorizer = CountVectorizer()  # TODO 该类会将文本中的词语转换为词频矩阵，矩阵元素a[i][j] 表示j词在i类文本下的词频  
+    vectorizer = CountVectorizer(max_features=3000)  # TODO 该类会将文本中的词语转换为词频矩阵，矩阵元素a[i][j] 表示j词在i类文本下的词频  
     transformer = TfidfTransformer()  # 该类会统计每个词语的tf-idf权值  
     train = transformer.fit_transform(vectorizer.fit_transform(cor))  # 第一个fit_transform是计算tf-idf，第二个fit_transform是将文本转为词频矩阵  
     word = vectorizer.get_feature_names()  # 获取词袋模型中的所有词语  
     print('Size of feature is',len(word))
     weight = train.toarray()  # 将tf-idf矩阵抽取出来，元素a[i][j]表示j词在i类文本中的tf-idf权重  
+    print('*******weight contain',np.count_nonzero(weight != weight),'*********')
+    weight=np.nan_to_num(weight)
+    weight[weight>1000]=1000
     return word,weight,vectorizer,transformer
 def adaboost(clf,X_train,y_train,learning_rate=1,n_estimators=100):
     ada_real = AdaBoostClassifier(base_estimator=clf, learning_rate=learning_rate, n_estimators=n_estimators,
@@ -199,7 +220,7 @@ def SplitTrainning(df_Base,size_Train,df_Predict,size_Predict,Cat,repeatNo):
         if batch_Predict * size_Predict<df_Predict.shape[0]:
             #the rest item
             indSeleted2 = range(batch_Predict * size_Predict, df_Predict.shape[0])
-            df_T = df_Predict.loc[indSeleted2]
+            df_T = df_Predict.iloc[indSeleted2]
             xtestcor = __TFgetjiebaSeries(df_T['ABSTRACT'])
             weighttest = TFtesttfidf(xtestcor, vector, transformer)
             ypredict = clff.predict(weighttest.tolist())
@@ -224,26 +245,28 @@ def writeExcel(df,url='',row_Max=500000):
     df[No * row_Max:df.shape[0]].to_excel(write, sheet_name='Sheet1', merge_cells=False)
     write.save()
 
-def TrainByIPC(df_Base,size_Train,df_Predict,size_Predict,Cat,repeatNo):
-    df_Base['l1_IPC']=df_Base['IPC'].str.slice(0,4)
-    df_Predict['l1_IPC']=df_Predict['IPC'].str.slice(0,4)
-    IPCs=df_Base['IPC'].str.slice(0,4).unique()
+def TrainByIPC(df_Base,size_Train,df_Predict,size_Predict,Cat,repeatNo,industryIPC):
+    df_Base['l1_IPC']=df_Base['IPC'].str.slice(0,3)
+    df_Predict['l1_IPC']=df_Predict['IPC'].str.slice(0,3)
+    IPCs=df_Base['IPC'].str.slice(0,3).unique()
     df_T=pd.DataFrame()
     for i in IPCs:
-        df_Base_temp=df_Base[df_Base['l1_IPC']==i]
-        df_Predict_temp = df_Predict[df_Predict['l1_IPC'] == i]
-        size_Train_temp=min(size_Train,df_Base_temp.shape[0])
-        size_Predict_temp=min(size_Predict,df_Predict_temp.shape[0])
-        if size_Predict_temp>0 and size_Train_temp>10:
-            print('Now,Processing IP in', i,'with train size',df_Base_temp.shape[0],'and predict size',df_Predict_temp.shape[0])
-            df_Temp=SplitTrainning(df_Base_temp,size_Train_temp,df_Predict_temp,size_Predict_temp,Cat,repeatNo)
-            df_T=pd.concat([df_T,df_Temp],axis=0,ignore_index=False)
+        if i in industryIPC:
+            df_Base_temp=df_Base[df_Base['l1_IPC']==i]
+            df_Predict_temp = df_Predict[df_Predict['l1_IPC'] == i]
+            size_Train_temp=min(size_Train,df_Base_temp.shape[0])
+            size_Predict_temp=min(size_Predict,df_Predict_temp.shape[0])
+            if size_Predict_temp>0 and size_Train_temp>10:
+                print('Now,Processing IP in', i,'with train size',df_Base_temp.shape[0],'and predict size',df_Predict_temp.shape[0])
+                df_Temp=SplitTrainning(df_Base_temp,size_Train_temp,df_Predict_temp,size_Predict_temp,Cat,repeatNo)
+                df_T=pd.concat([df_T,df_Temp],axis=0,ignore_index=False)
 
     return df_T
 
 if __name__=="__main__":
     #1.inial
     docdir = os.path.abspath('..') + '\\doc\\'
+    industryFile=docdir+'industry_sep.xlsx'
     name=readFilesName(docdir+'mid\\')
     dest=docdir+'re2\\'
     df_Base = pd.DataFrame()
@@ -251,6 +274,9 @@ if __name__=="__main__":
 
     #2.get the ready Data
     print('-------------Start Reading Data--------------')
+    industryStd=pd.read_excel(industryFile,na_values='',index_col=None)
+    industryIPC=industryStd['IPC'].str.slice(0,3).unique()
+
     j=0
     for i in name:
         df=readExcel(i)
@@ -262,12 +288,14 @@ if __name__=="__main__":
     print('-------------Start Training Data--------------')
     df_Base,Cat=digitize_Cat(df_Base)
 
-    df=TrainByIPC(df_Base,400,df_Test,500,Cat,1)
+    df=TrainByIPC(df_Base,200,df_Test,400,Cat,2,industryIPC)
     # 上面有三个数字，第一个代表训练集大小，第二个代表预测集大小，第三个表示有多少个弱分类器
     #4.export result
-    print(df)
+    print(df.head())
     writeExcel(df, url=dest, row_Max=500000)#结果输出，其中数字代表一个文件里面有多少条记录，会拆分
     write = pd.ExcelWriter(dest+'Cat.xlsx')
     Cat.to_excel(write, sheet_name='Sheet1', merge_cells=False)
     write.save()
     pass
+
+
